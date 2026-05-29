@@ -76,7 +76,6 @@ architecture rtl of gcm is
     
     signal hash_busy: std_logic := '0';
 
-    -- [MODIFIED] Clean Handshake Signals to Prevent Deadlocks and Swallows
     signal A_fire : std_logic;
     signal P_fire : std_logic;
 
@@ -105,8 +104,6 @@ begin
     P_bytes <= bytes_in when data_state = "10" else (others => '0');
 
 
-    -- [MODIFIED] Added 'gctr_valid_out = 0' to seamlessly bridge the 1-cycle gap 
-    -- between camellia finishing and GHASH asserting the busy flag!
     A_fire <= '1' when (current = HASH_A and A_valid = '1' and hash_busy = '0') else '0';
     P_fire <= '1' when (current = GCTR_C and P_valid = '1' and hash_busy = '0' and gctr_ready = '1' and gctr_valid_out = '0') else '0';
 
@@ -165,7 +162,6 @@ begin
 
     hash_data_in <= A_complete when current = HASH_A else C_complete when current = GCTR_C else len_A & len_C;
     
-    -- [MODIFIED] Uses the internal gctr_valid_out signal for strict VHDL-93 safety
     hash_data_valid <= A_fire when current = HASH_A else gctr_valid_out when current = GCTR_C else len_valid;
     
     hash_is_last <= A_last when current = HASH_A else gctr_is_last_out when current = GCTR_C else '1';
