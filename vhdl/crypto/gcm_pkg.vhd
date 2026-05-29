@@ -3,6 +3,8 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std_unsigned.all;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
 package gcm_pkg is
 
@@ -10,6 +12,12 @@ package gcm_pkg is
     subtype camellia_w64_t is std_ulogic_vector(0 to 63);
     subtype camellia_w32_t is std_ulogic_vector(0 to 31);
     subtype camellia_w128_t is std_ulogic_vector(0 to 127);
+
+    function camellia_f(x: camellia_w64_t; k: camellia_w64_t) return camellia_w64_t;
+    function camellia_fl(x: camellia_w64_t; kl: camellia_w64_t) return camellia_w64_t;
+    function camellia_fl_inv(y: camellia_w64_t; kl: camellia_w64_t) return camellia_w64_t;
+    function camellia_key_sched(k: camellia_w128_t) return camellia_w128_t;
+    function rotate_left128(v: camellia_w128_t; n: natural) return camellia_w128_t;
 
     function encr_camellia128 (M, K: camellia_w128_t) return camellia_w128_t;
 
@@ -190,7 +198,7 @@ package body gcm_pkg is
 
     end function camellia_6rounds;
 
-    function encr_camellia128(M: camellia_w128_t; K: camellia_w128_t) return camellia_w128_t is
+    function encr_camellia128(M, K: camellia_w128_t) return camellia_w128_t is
     variable KA: camellia_w128_t;
     variable kw1, kw2, kw3, kw4: camellia_w64_t;
     variable k1,  k2,  k3,  k4,  k5,  k6, k7,  k8,  k9,  k10, k11, k12, k13, k14, k15, k16, k17, k18: camellia_w64_t;
@@ -256,7 +264,7 @@ package body gcm_pkg is
     ------------------------------------------------------------------------------------
     -- Completion function for A and C last block
 
-    function complete(data: std_logic_vector(127 downto 0); bytes: std_logic_vector(3 downto 0); is_last: std_logic) return std_logic_vector(127 downto 0) is
+    function complete(data: std_logic_vector(127 downto 0); bytes: std_logic_vector(3 downto 0); is_last: std_logic) return std_logic_vector is
         variable res: std_logic_vector(127 downto 0);
         variable n: integer;
     begin
