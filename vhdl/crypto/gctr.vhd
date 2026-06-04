@@ -42,11 +42,13 @@ architecture rtl of gctr is
     
     signal len_C : unsigned(63 downto 0);
 begin
+
     camellia: entity work.camellia_core
         port map (
             clk => clk,
             rst => rst,
             key => key,
+            KA_in => (others => '0'),
             data_in => cb_to_camellia,
             valid_in => data_in_valid,
             ready => camellia_ready,
