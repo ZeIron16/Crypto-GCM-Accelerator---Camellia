@@ -10,8 +10,9 @@ entity gcm is
         
         ready: out std_logic;
 
-        -- Input const
-        key: in std_logic_vector(127 downto 0);
+        key: in std_logic_vector(255 downto 0);
+        key_len: in std_logic_vector(1 downto 0);
+        
         IV: in std_logic_vector(95 downto 0);
 
         -- Input flow
@@ -22,13 +23,11 @@ entity gcm is
         data_in: in std_logic_vector(127 downto 0);
         valid_in: in std_logic;
         last_in: in std_logic;
-        bytes_in: in std_logic_vector(3 downto 0);
 
         -- Output
         C_data: out std_logic_vector(127 downto 0);
         C_valid: out std_logic;
         C_last: out std_logic;
-        C_bytes: out std_logic_vector(3 downto 0);
 
         T: out std_logic_vector(127 downto 0);
         T_valid: out std_logic
@@ -47,7 +46,6 @@ architecture rtl of gcm is
     signal A_data, P_data : std_logic_vector(127 downto 0);
     signal A_valid, P_valid : std_logic;
     signal A_last, P_last : std_logic;
-    signal A_bytes, P_bytes : std_logic_vector(3 downto 0);
 
     signal hash_data_in: std_logic_vector(127 downto 0);
     signal hash_data_valid: std_logic;
@@ -69,7 +67,6 @@ architecture rtl of gcm is
     signal gctr_data_in, gctr_data_out: std_logic_vector(127 downto 0);
     signal gctr_valid, gctr_valid_out: std_logic;
     signal gctr_is_last, gctr_is_last_out: std_logic;
-    signal gctr_byte, gctr_byte_out: std_logic_vector(3 downto 0);
     signal gctr_len: std_logic_vector(63 downto 0);
     signal gctr_ready: std_logic;
     signal ICB: std_logic_vector(127 downto 0);
@@ -96,12 +93,10 @@ begin
     A_data <= data_in  when data_state = "01" else (others => '0');
     A_valid <= valid_in when data_state = "01" else '0';
     A_last <= last_in  when data_state = "01" else '0';
-    A_bytes <= bytes_in when data_state = "01" else (others => '0');
 
     P_data <= data_in  when data_state = "10" else (others => '0');
     P_valid <= valid_in when data_state = "10" else '0';
     P_last <= last_in  when data_state = "10" else '0';
-    P_bytes <= bytes_in when data_state = "10" else (others => '0');
 
 
     A_fire <= '1' when (current = HASH_A and A_valid = '1' and hash_busy = '0') else '0';
@@ -122,8 +117,6 @@ begin
 
     gctr_is_last <= '1' when (current = GCTR_H or current = START_GCTR_H) else P_last when current = GCTR_C else '1';
 
-    gctr_byte <= "0000" when (current = GCTR_H or current = START_GCTR_H) else P_bytes when current = GCTR_C else "0000";
-
     ICB <= (others => '0') when (current = GCTR_H or current = START_GCTR_H or current = IDLE) else J0_incr when (current = GCTR_C or current = START_GCTR_C) else J0; 
 
     -- GCTR UN-MUX
@@ -131,7 +124,6 @@ begin
     C_data <= gctr_data_out when current = GCTR_C else (others => '0');
     C_valid <= gctr_valid_out when current = GCTR_C else '0';
     C_last <= gctr_is_last_out when current = GCTR_C else '0';
-    C_bytes <= gctr_byte_out when current = GCTR_C else (others => '0');
 
     len_C  <= gctr_len;
 
@@ -144,17 +136,19 @@ begin
             clk => clk,
             rst => rst,
             ICB => ICB,
+            
+            -- [MODIFIED] Wiring the new parameters
             key => key,
+            key_len => key_len,
+            
             start => gctr_start,
             data_in => gctr_data_in,
             data_in_valid => gctr_valid,
             is_last_in => gctr_is_last,
-            bytes_valid_in => gctr_byte,
             ready => gctr_ready,
             data_out => gctr_data_out,
             data_out_valid => gctr_valid_out,
             is_last_out => gctr_is_last_out,
-            bytes_valid_out => gctr_byte_out,
             len_out => gctr_len
         );
 

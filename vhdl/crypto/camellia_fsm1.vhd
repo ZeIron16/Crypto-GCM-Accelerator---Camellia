@@ -8,8 +8,10 @@ entity camellia_core is
         clk       : in  std_logic;
         rst       : in  std_logic;
         data_in   : in  std_logic_vector(127 downto 0);
-        key       : in  std_logic_vector(127 downto 0);
-        KA_in     : in  camellia_w128_t;
+        
+        key       : in  std_logic_vector(255 downto 0);
+        key_len   : in  std_logic_vector(1 downto 0);
+        
         valid_in  : in  std_logic;
         ready     : out std_logic; 
         data_out  : out std_logic_vector(127 downto 0);
@@ -19,13 +21,14 @@ end camellia_core;
 
 architecture rtl of camellia_core is
 
-    -- Added WAIT_KEY state for handshake
     type state_t is (IDLE, WAIT_KEY,
                      RND_1,  RND_2,  RND_3,  RND_4,  RND_5,  RND_6,
                      FL_1,
                      RND_7,  RND_8,  RND_9,  RND_10, RND_11, RND_12,
                      FL_2,
-                     RND_13, RND_14, RND_15, RND_16, RND_17, RND_18);
+                     RND_13, RND_14, RND_15, RND_16, RND_17, RND_18,
+                     FL_3, 
+                     RND_19, RND_20, RND_21, RND_22, RND_23, RND_24);
                      
     signal state : state_t := IDLE;
     
@@ -36,19 +39,25 @@ architecture rtl of camellia_core is
     
     signal current_kl1, current_kl2 : camellia_w64_t := (others => '0');
     
-    -- REGISTERED key storage
+    -- REGISTERED key storage (Expanded mappings for up to 24 rounds)
     signal kw1, kw2, kw3, kw4 : camellia_w64_t;
     signal k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, k12, k13, k14, k15, k16, k17, k18 : camellia_w64_t;
-    signal kl1, kl2, kl3, kl4 : camellia_w64_t;
-    signal K_w128_reg : camellia_w128_t;
+    signal k19, k20, k21, k22, k23, k24 : camellia_w64_t;
+    signal kl1, kl2, kl3, kl4, kl5, kl6 : camellia_w64_t;
+    
+    signal K_L_reg : camellia_w128_t;
+    signal K_R_reg : camellia_w128_t;
+    signal key_len_reg : std_logic_vector(1 downto 0);
 
     -- Scheduler Interface Signals
     signal sched_start : std_logic := '0';
     signal sched_ready : std_logic;
     signal KA_w128_sig : camellia_w128_t;
+    signal KB_w128_sig : camellia_w128_t;
 
 begin
     ready <= '1' when state = IDLE else '0';
+    
     -------------------------------------------------------------------
     -- 0. SCHEDULER INSTANTIATION
     -------------------------------------------------------------------
@@ -58,7 +67,9 @@ begin
             rst         => rst,
             start       => sched_start,
             key_in      => key,
+            key_len     => key_len,
             KA_out      => KA_w128_sig,
+            KB_out      => KB_w128_sig,
             keys_ready  => sched_ready
         );
 
@@ -75,9 +86,9 @@ begin
     FL_R_out <= camellia_fl_inv(R_reg, current_kl2);
 
     -------------------------------------------------------------------
-    -- 3. COMBINATORIAL KEY MULTIPLEXING (Retained in core)
+    -- 3. COMBINATORIAL KEY MULTIPLEXING
     -------------------------------------------------------------------
-    process(state, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, k12, k13, k14, k15, k16, k17, k18, kl1, kl2, kl3, kl4)
+    process(state, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, k12, k13, k14, k15, k16, k17, k18, k19, k20, k21, k22, k23, k24, kl1, kl2, kl3, kl4, kl5, kl6)
     begin
         current_k   <= (others => '0');
         current_kl1 <= (others => '0');
@@ -104,6 +115,13 @@ begin
             when RND_16 => current_k <= k16;
             when RND_17 => current_k <= k17;
             when RND_18 => current_k <= k18;
+            when FL_3   => current_kl1 <= kl5; current_kl2 <= kl6;
+            when RND_19 => current_k <= k19;
+            when RND_20 => current_k <= k20;
+            when RND_21 => current_k <= k21;
+            when RND_22 => current_k <= k22;
+            when RND_23 => current_k <= k23;
+            when RND_24 => current_k <= k24;
             when others => null;
         end case;
     end process;
@@ -113,7 +131,7 @@ begin
     -------------------------------------------------------------------
     process(clk)
         variable temp_data_w128 : camellia_w128_t;
-        variable temp_K_w128    : camellia_w128_t;
+        variable temp_K_L_w128  : camellia_w128_t;
     begin
         if rising_edge(clk) then
             if rst = '1' then
@@ -129,15 +147,22 @@ begin
                 case state is
                     when IDLE =>
                         if valid_in = '1' then
-                            -- Latch data and key immediately, trigger scheduler
                             temp_data_w128 := camellia_w128_t(data_in);
-                            temp_K_w128    := camellia_w128_t(key);
+                            temp_K_L_w128  := camellia_w128_t(key(255 downto 128));
                             
-                            K_w128_reg <= temp_K_w128;
+                            key_len_reg <= key_len;
+                            K_L_reg <= temp_K_L_w128;
+                            if key_len = "00" then
+                                K_R_reg <= (others => '0');
+                            elsif key_len = "01" then
+                                K_R_reg <= camellia_w128_t(key(127 downto 64) & not key(127 downto 64));
+                            else
+                                K_R_reg <= camellia_w128_t(key(127 downto 0));
+                            end if;
                             
-                            -- Initial whitening
-                            L_reg <= temp_data_w128(0 to 63) xor temp_K_w128(0 to 63);
-                            R_reg <= temp_data_w128(64 to 127) xor temp_K_w128(64 to 127);
+                            -- Initial whitening is ALWAYS K_L based
+                            L_reg <= temp_data_w128(0 to 63) xor temp_K_L_w128(0 to 63);
+                            R_reg <= temp_data_w128(64 to 127) xor temp_K_L_w128(64 to 127);
                             
                             sched_start <= '1';
                             state       <= WAIT_KEY;
@@ -148,35 +173,80 @@ begin
                             -- Handshake acknowledge
                             sched_start <= '0';
                             
-                            -- Map KA and K to round keys once ready
-                            kw1 <= K_w128_reg(0 to 63);
-                            kw2 <= K_w128_reg(64 to 127);
-                            kw3 <= rotate_left128(KA_w128_sig, 111)(0 to 63);
-                            kw4 <= rotate_left128(KA_w128_sig, 111)(64 to 127);
+                            if key_len_reg = "00" then
+                                -- 128-bit Subkey Mapping
+                                kw1 <= K_L_reg(0 to 63);
+                                kw2 <= K_L_reg(64 to 127);
+                                kw3 <= rotate_left128(KA_w128_sig, 111)(0 to 63);
+                                kw4 <= rotate_left128(KA_w128_sig, 111)(64 to 127);
 
-                            k1  <= KA_w128_sig(0 to 63);
-                            k2  <= KA_w128_sig(64 to 127);
-                            k3  <= rotate_left128(K_w128_reg, 15)(0 to 63);
-                            k4  <= rotate_left128(K_w128_reg, 15)(64 to 127);
-                            k5  <= rotate_left128(KA_w128_sig, 15)(0 to 63);
-                            k6  <= rotate_left128(KA_w128_sig, 15)(64 to 127);
-                            k7  <= rotate_left128(K_w128_reg, 45)(0 to 63);
-                            k8  <= rotate_left128(K_w128_reg, 45)(64 to 127);
-                            k9  <= rotate_left128(KA_w128_sig, 45)(0 to 63);
-                            k10 <= rotate_left128(K_w128_reg, 60)(64 to 127);
-                            k11 <= rotate_left128(KA_w128_sig, 60)(0 to 63);
-                            k12 <= rotate_left128(KA_w128_sig, 60)(64 to 127);
-                            k13 <= rotate_left128(K_w128_reg, 94)(0 to 63);
-                            k14 <= rotate_left128(K_w128_reg, 94)(64 to 127);
-                            k15 <= rotate_left128(KA_w128_sig, 94)(0 to 63);
-                            k16 <= rotate_left128(KA_w128_sig, 94)(64 to 127);
-                            k17 <= rotate_left128(K_w128_reg, 111)(0 to 63);
-                            k18 <= rotate_left128(K_w128_reg, 111)(64 to 127);
+                                k1  <= KA_w128_sig(0 to 63);
+                                k2  <= KA_w128_sig(64 to 127);
+                                k3  <= rotate_left128(K_L_reg, 15)(0 to 63);
+                                k4  <= rotate_left128(K_L_reg, 15)(64 to 127);
+                                k5  <= rotate_left128(KA_w128_sig, 15)(0 to 63);
+                                k6  <= rotate_left128(KA_w128_sig, 15)(64 to 127);
+                                k7  <= rotate_left128(K_L_reg, 45)(0 to 63);
+                                k8  <= rotate_left128(K_L_reg, 45)(64 to 127);
+                                k9  <= rotate_left128(KA_w128_sig, 45)(0 to 63);
+                                k10 <= rotate_left128(K_L_reg, 60)(64 to 127);
+                                k11 <= rotate_left128(KA_w128_sig, 60)(0 to 63);
+                                k12 <= rotate_left128(KA_w128_sig, 60)(64 to 127);
+                                k13 <= rotate_left128(K_L_reg, 94)(0 to 63);
+                                k14 <= rotate_left128(K_L_reg, 94)(64 to 127);
+                                k15 <= rotate_left128(KA_w128_sig, 94)(0 to 63);
+                                k16 <= rotate_left128(KA_w128_sig, 94)(64 to 127);
+                                k17 <= rotate_left128(K_L_reg, 111)(0 to 63);
+                                k18 <= rotate_left128(K_L_reg, 111)(64 to 127);
 
-                            kl1 <= rotate_left128(KA_w128_sig, 30)(0 to 63);
-                            kl2 <= rotate_left128(KA_w128_sig, 30)(64 to 127);
-                            kl3 <= rotate_left128(K_w128_reg, 77)(0 to 63);
-                            kl4 <= rotate_left128(K_w128_reg, 77)(64 to 127);
+                                kl1 <= rotate_left128(KA_w128_sig, 30)(0 to 63);
+                                kl2 <= rotate_left128(KA_w128_sig, 30)(64 to 127);
+                                kl3 <= rotate_left128(K_L_reg, 77)(0 to 63);
+                                kl4 <= rotate_left128(K_L_reg, 77)(64 to 127);
+                            else
+                                -- 192/256-bit Subkey Mapping
+                                kw1 <= K_L_reg(0 to 63);
+                                kw2 <= K_L_reg(64 to 127);
+                                kw3 <= rotate_left128(KB_w128_sig, 111)(0 to 63);
+                                kw4 <= rotate_left128(KB_w128_sig, 111)(64 to 127);
+
+                                k1  <= KB_w128_sig(0 to 63);
+                                k2  <= KB_w128_sig(64 to 127);
+                                k3  <= rotate_left128(K_R_reg, 15)(0 to 63);
+                                k4  <= rotate_left128(K_R_reg, 15)(64 to 127);
+                                k5  <= rotate_left128(KA_w128_sig, 15)(0 to 63);
+                                k6  <= rotate_left128(KA_w128_sig, 15)(64 to 127);
+                                
+                                kl1 <= rotate_left128(K_R_reg, 30)(0 to 63);
+                                kl2 <= rotate_left128(K_R_reg, 30)(64 to 127);
+                                
+                                k7  <= rotate_left128(KB_w128_sig, 30)(0 to 63);
+                                k8  <= rotate_left128(KB_w128_sig, 30)(64 to 127);
+                                k9  <= rotate_left128(K_L_reg, 45)(0 to 63);
+                                k10 <= rotate_left128(K_L_reg, 45)(64 to 127);
+                                k11 <= rotate_left128(KA_w128_sig, 45)(0 to 63);
+                                k12 <= rotate_left128(KA_w128_sig, 45)(64 to 127);
+                                
+                                kl3 <= rotate_left128(K_L_reg, 60)(0 to 63);
+                                kl4 <= rotate_left128(K_L_reg, 60)(64 to 127);
+                                
+                                k13 <= rotate_left128(K_R_reg, 60)(0 to 63);
+                                k14 <= rotate_left128(K_R_reg, 60)(64 to 127);
+                                k15 <= rotate_left128(KB_w128_sig, 60)(0 to 63);
+                                k16 <= rotate_left128(KB_w128_sig, 60)(64 to 127);
+                                k17 <= rotate_left128(K_L_reg, 77)(0 to 63);
+                                k18 <= rotate_left128(K_L_reg, 77)(64 to 127);
+                                
+                                kl5 <= rotate_left128(KA_w128_sig, 77)(0 to 63);
+                                kl6 <= rotate_left128(KA_w128_sig, 77)(64 to 127);
+                                
+                                k19 <= rotate_left128(K_R_reg, 94)(0 to 63);
+                                k20 <= rotate_left128(K_R_reg, 94)(64 to 127);
+                                k21 <= rotate_left128(KA_w128_sig, 94)(0 to 63);
+                                k22 <= rotate_left128(KA_w128_sig, 94)(64 to 127);
+                                k23 <= rotate_left128(K_L_reg, 111)(0 to 63);
+                                k24 <= rotate_left128(K_L_reg, 111)(64 to 127);
+                            end if;
 
                             state <= RND_1;
                         end if;
@@ -220,7 +290,30 @@ begin
                     when RND_17 =>
                         L_reg <= L_next; R_reg <= R_next; state <= RND_18;
                     when RND_18 =>
-                        -- Final whitening
+                        -- Evaluate length to branch into completion or extended rounds 
+                        if key_len_reg = "00" then
+                            -- Final whitening for 128-bit
+                            data_out  <= std_logic_vector((L_reg xor kw3) & (L_next xor kw4));
+                            valid_out <= '1';
+                            state     <= IDLE;
+                        else
+                            L_reg <= L_next; R_reg <= R_next; state <= FL_3;
+                        end if;
+
+                    when FL_3 =>
+                        L_reg <= FL_L_out; R_reg <= FL_R_out; state <= RND_19;
+                    when RND_19 =>
+                        L_reg <= L_next; R_reg <= R_next; state <= RND_20;
+                    when RND_20 =>
+                        L_reg <= L_next; R_reg <= R_next; state <= RND_21;
+                    when RND_21 =>
+                        L_reg <= L_next; R_reg <= R_next; state <= RND_22;
+                    when RND_22 =>
+                        L_reg <= L_next; R_reg <= R_next; state <= RND_23;
+                    when RND_23 =>
+                        L_reg <= L_next; R_reg <= R_next; state <= RND_24;
+                    when RND_24 =>
+                        -- Final whitening for 192/256-bit
                         data_out  <= std_logic_vector((L_reg xor kw3) & (L_next xor kw4));
                         valid_out <= '1';
                         state     <= IDLE;

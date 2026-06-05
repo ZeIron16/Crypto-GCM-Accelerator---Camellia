@@ -56,7 +56,9 @@ architecture rtl of crypto is
     signal reg_cipher_base_addr: std_ulogic_vector(31 downto 0) := (others => '0');
     signal reg_cipher_byte_length: std_ulogic_vector(31 downto 0) := (others => '0');
     
-    signal reg_key: std_ulogic_vector(127 downto 0) := (others => '0');
+    signal reg_key: std_ulogic_vector(255 downto 0) := (others => '0');
+    signal reg_key_len: std_ulogic_vector(1 downto 0) := "00"; 
+    
     signal reg_iv: std_ulogic_vector(95 downto 0)  := (others => '0');
     signal reg_tag : std_ulogic_vector(127 downto 0) := (others => '0');
     signal reg_done: std_ulogic := '0';
@@ -146,20 +148,18 @@ begin
         
         ready      => dma_gcm_ready,
 
-        -- Key and IV coming statically from registers
         key        => std_logic_vector(reg_key),
+        key_len    => std_logic_vector(reg_key_len),
         IV         => std_logic_vector(reg_iv),
 
         data_state => dma_in_state,
         data_in    => std_logic_vector(dma_gcm_data),
         valid_in   => std_logic(dma_gcm_valid),
         last_in    => std_logic(dma_gcm_last),
-        bytes_in   => "0000", -- Always 16 bytes
 
         C_data     => gcm_C_data,
         C_valid    => gcm_dma_valid,
         C_last     => open,
-        C_bytes    => open,
 
         T          => gcm_T,
         T_valid    => gcm_T_valid
@@ -204,6 +204,7 @@ begin
                 s0_axi_bvalid_int  <= '0';
                 s0_axi_bresp_int   <= "00";
                 reg_start <= '0';
+                reg_key_len <= "00";
             else
                 if reg_start = '1' then
                     reg_start <= '0';
@@ -231,17 +232,24 @@ begin
                             reg_cipher_base_addr <= s0_axi_wdata;
                         when "0000000110" => -- 0x18: Ciphertext Length
                             reg_cipher_byte_length <= s0_axi_wdata;
+                        
+                        when "0000000111" => -- 0x1C: Key Length Config
+                            reg_key_len <= s0_axi_wdata(1 downto 0);
 
-                        -- KEY
-                        when "0000001000" => reg_key(127 downto 96) <= s0_axi_wdata;
-                        when "0000001001" => reg_key(95 downto 64)  <= s0_axi_wdata;
-                        when "0000001010" => reg_key(63 downto 32)  <= s0_axi_wdata;
-                        when "0000001011" => reg_key(31 downto 0)   <= s0_axi_wdata;
+                        when "0000001000" => reg_key(255 downto 224) <= s0_axi_wdata; -- 0x20
+                        when "0000001001" => reg_key(223 downto 192) <= s0_axi_wdata; -- 0x24
+                        when "0000001010" => reg_key(191 downto 160) <= s0_axi_wdata; -- 0x28
+                        when "0000001011" => reg_key(159 downto 128) <= s0_axi_wdata; -- 0x2C
 
                         -- IV
-                        when "0000001100" => reg_iv(95 downto 64)   <= s0_axi_wdata;
-                        when "0000001101" => reg_iv(63 downto 32)   <= s0_axi_wdata;
-                        when "0000001110" => reg_iv(31 downto 0)    <= s0_axi_wdata;
+                        when "0000001100" => reg_iv(95 downto 64)   <= s0_axi_wdata; -- 0x30
+                        when "0000001101" => reg_iv(63 downto 32)   <= s0_axi_wdata; -- 0x34
+                        when "0000001110" => reg_iv(31 downto 0)    <= s0_axi_wdata; -- 0x38
+
+                        when "0000010100" => reg_key(127 downto 96) <= s0_axi_wdata; -- 0x50
+                        when "0000010101" => reg_key(95 downto 64)  <= s0_axi_wdata; -- 0x54
+                        when "0000010110" => reg_key(63 downto 32)  <= s0_axi_wdata; -- 0x58
+                        when "0000010111" => reg_key(31 downto 0)   <= s0_axi_wdata; -- 0x5C
 
                         when others =>
                             s0_axi_bresp_int <= "11"; 

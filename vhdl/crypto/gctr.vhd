@@ -9,21 +9,22 @@ entity gctr is
         
         -- Input
         ICB: in std_logic_vector(127 downto 0);
-        key: in std_logic_vector(127 downto 0);
+        
+        key: in std_logic_vector(255 downto 0);
+        key_len: in std_logic_vector(1 downto 0);
+        
         start: in std_logic;
         
         -- Input X
         data_in: in std_logic_vector(127 downto 0);
         data_in_valid: in std_logic;
         is_last_in: in std_logic;
-        bytes_valid_in: in std_logic_vector(3 downto 0); -- "0000" = 16 , "0001" = 1 and "1111" = 15
         
         -- Output
         ready: out std_logic;
         data_out: out std_logic_vector(127 downto 0);
         data_out_valid: out std_logic;
         is_last_out: out std_logic;
-        bytes_valid_out: out std_logic_vector(3 downto 0);
         len_out: out std_logic_vector(63 downto 0)
     );
 end gctr;
@@ -38,7 +39,6 @@ architecture rtl of gctr is
 
     signal saved_data : std_logic_vector(127 downto 0);
     signal saved_last : std_logic;
-    signal saved_bytes: std_logic_vector(3 downto 0);
     
     signal len_C : unsigned(63 downto 0);
 begin
@@ -47,8 +47,10 @@ begin
         port map (
             clk => clk,
             rst => rst,
+            
             key => key,
-            KA_in => (others => '0'),
+            key_len => key_len,
+            
             data_in => cb_to_camellia,
             valid_in => data_in_valid,
             ready => camellia_ready,
@@ -76,17 +78,8 @@ begin
                     
                     saved_data  <= data_in;
                     saved_last  <= is_last_in;
-                    saved_bytes <= bytes_valid_in;
                     
-                    if is_last_in = '0' then
-                        len_C <= len_C + 128;
-                    else
-                        if bytes_valid_in = "0000" then
-                            len_C <= len_C + 128;
-                        else
-                            len_C <= len_C + (unsigned(bytes_valid_in) * 8);
-                        end if;
-                    end if;
+                    len_C <= len_C + 128;
                 end if;
             end if;
         end if;
@@ -95,7 +88,6 @@ begin
     data_out <= camellia_result xor saved_data;
     data_out_valid <= camellia_valid;
     is_last_out <= saved_last;
-    bytes_valid_out <= saved_bytes;
     len_out <= std_logic_vector(len_C);
 
 end architecture rtl;
