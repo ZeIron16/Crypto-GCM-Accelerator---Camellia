@@ -93,16 +93,8 @@ begin
 
     bready <= '1';
 
-    aw_valid_int <= '1' when (current_state = WRITING) and (aw_sent < words_to_send) and ((aw_sent - b_recv) < 16) else '0';
-    
-    w_valid_int <= '1' when (current_state = WRITING) and (w_sent < words_to_send) and (fifo_empty = '0') else '0';
-
-
     -- AXI Write
     process(aclk)
-        variable aw_fire : boolean;
-        variable w_fire  : boolean;
-        variable b_fire  : boolean;
     begin
         if rising_edge(aclk) then
             if aresetn = '0' then
@@ -113,19 +105,19 @@ begin
                 w_sent <= (others => '0');
                 b_recv <= (others => '0');
                 idle <= '1';
+                aw_valid_int <= '0';
+                w_valid_int <= '0';
             else
-                aw_fire := (aw_valid_int = '1' and awready = '1');
-                w_fire := (w_valid_int = '1'  and wready = '1');
-                b_fire := (bvalid = '1' and bready = '1');
-
                 case current_state is
                     when IDLE_STATE =>
                         if start = '1' then
                             aw_addr <= unsigned(payload_base_addr(29 downto 0));
-                            words_to_send <= unsigned(payload_byte_length(31 downto 2)); -- divide bytes by 4 for word count
+                            words_to_send <= unsigned(payload_byte_length(31 downto 2));
                             aw_sent <= (others => '0');
                             w_sent <= (others => '0');
                             b_recv <= (others => '0');
+                            aw_valid_int <= '0';
+                            w_valid_int <= '0';
                             
                             if unsigned(payload_byte_length) > 0 then
                                 current_state <= WRITING;
@@ -134,18 +126,26 @@ begin
                         end if;
 
                     when WRITING =>
-                        if aw_fire then
+                        -- Address Write Channel
+                        if aw_valid_int = '1' and awready = '1' then
+                            aw_valid_int <= '0';
                             aw_addr <= aw_addr + 4;
                             aw_sent <= aw_sent + 1;
+                        elsif aw_valid_int = '0' and aw_sent < words_to_send and aw_sent <= w_sent and fifo_empty = '0' then
+                            aw_valid_int <= '1';
                         end if;
 
-                        if w_fire then
+                        -- Data Write Channel
+                        if w_valid_int = '1' and wready = '1' then
+                            w_valid_int <= '0';
                             w_sent <= w_sent + 1;
+                        elsif w_valid_int = '0' and w_sent < words_to_send and fifo_empty = '0' then
+                            w_valid_int <= '1';
                         end if;
 
-                        if b_fire then
+                        -- Response Channel
+                        if bvalid = '1' and bready = '1' then
                             b_recv <= b_recv + 1;
-                            
                             if (b_recv + 1) = words_to_send then
                                 current_state <= IDLE_STATE;
                                 idle <= '1';
