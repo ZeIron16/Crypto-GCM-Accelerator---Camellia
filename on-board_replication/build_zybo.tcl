@@ -1,14 +1,3 @@
-# build_zybo.tcl
-# Zynq AES-GCM crypto accelerator – Zybo Z7-10 (xc7z010clg400-1)
-#
-# Architecture:
-#   CPU (M_AXI_GP0) --> AXI Interconnect --> crypto_0/s0_axi   @ 0x43C00000
-#   CPU (M_AXI_GP0) --> AXI Interconnect --> axi_bram_ctrl_0   @ 0x40000000
-#                                                 |
-#                                           blk_mem_gen_0 (True Dual Port)
-#                                                 |
-#   crypto_0/m0_axi --> axi_bram_ctrl_1    @ 0x00000000 (crypto local bus)
-
 set project_name "crypto_zybo"
 set board_part   "xc7z010clg400-1"
 
@@ -29,7 +18,7 @@ update_compile_order -fileset sources_1
 
 create_bd_design "system"
 
-# --- Zynq PS ---
+# Zynq PS
 create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 processing_system7_0
 apply_bd_automation \
     -rule xilinx.com:bd_rule:processing_system7 \
@@ -38,24 +27,22 @@ apply_bd_automation \
 set_property -dict [list CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ {100.000000}] \
     [get_bd_cells processing_system7_0]
 
-# --- Crypto Engine ---
+# Crypto
 create_bd_cell -type module -reference crypto crypto_0
 
-# --- Tie off board I/O ---
+# Tie off board I/O 
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 constant_0
 set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {4}] \
     [get_bd_cells constant_0]
 connect_bd_net [get_bd_pins constant_0/dout] [get_bd_pins crypto_0/sw]
 connect_bd_net [get_bd_pins constant_0/dout] [get_bd_pins crypto_0/btn]
 
-# ---------------------------------------------------------------------------
-#    Port A  --> CPU  (via axi_bram_ctrl_0)
-#    Port B  --> Crypto DMA (via axi_bram_ctrl_1)
-#
-#    Explicit width=32 on BOTH ports.  Without this, blk_mem_gen defaults
-#    Port B to 18-bit when only Memory_Type is set, causing a width mismatch
-#    that makes the AXI BRAM Controller return 0x00000008 on every CPU read.
-# ---------------------------------------------------------------------------
+
+# Port A  --> CPU  (via axi_bram_ctrl_0)
+# Port B  --> Crypto DMA (via axi_bram_ctrl_1)
+
+# width = 32 on BOTH ports (default 18 on port B => misalignment)
+
 create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 blk_mem_gen_0
 set_property -dict [list \
     CONFIG.Memory_Type                                        {True_Dual_Port_RAM} \
@@ -72,7 +59,7 @@ set_property -dict [list \
 create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0
 create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_1
 
-# Set single-port mode on each controller (each owns one BRAM port)
+# single_port because default -> single master can access the 2 ports (but here we have 2 distinct masters)
 set_property -dict [list CONFIG.SINGLE_PORT_BRAM {1}] [get_bd_cells axi_bram_ctrl_0]
 set_property -dict [list CONFIG.SINGLE_PORT_BRAM {1}] [get_bd_cells axi_bram_ctrl_1]
 
@@ -80,6 +67,7 @@ connect_bd_intf_net \
     [get_bd_intf_pins axi_bram_ctrl_0/BRAM_PORTA] \
     [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTA]
 
+# axi_bram_ctrl_1 gives the name A to its port (because single_port) so we connect it to port B (name defferenciation)
 connect_bd_intf_net \
     [get_bd_intf_pins axi_bram_ctrl_1/BRAM_PORTA] \
     [get_bd_intf_pins blk_mem_gen_0/BRAM_PORTB]
@@ -91,13 +79,13 @@ apply_bd_automation \
     -config {Master "/processing_system7_0/M_AXI_GP0" Slave "/crypto_0/s0_axi"} \
     [get_bd_intf_pins crypto_0/s0_axi]
 
-# CPU --> BRAM Controller 0  (CPU read/write window into BRAM)
+# CPU --> BRAM Controller 0
 apply_bd_automation \
     -rule xilinx.com:bd_rule:axi4 \
     -config {Master "/processing_system7_0/M_AXI_GP0" Slave "/axi_bram_ctrl_0/S_AXI"} \
     [get_bd_intf_pins axi_bram_ctrl_0/S_AXI]
 
-# Crypto DMA master --> BRAM Controller 1  (crypto engine window into BRAM)
+# Crypto DMA master --> BRAM Controller 1
 apply_bd_automation \
     -rule xilinx.com:bd_rule:axi4 \
     -config {Master "/crypto_0/m0_axi" Slave "/axi_bram_ctrl_1/S_AXI"} \
@@ -106,7 +94,7 @@ apply_bd_automation \
 
 assign_bd_address
 
-# Print all segment names so mismatches are visible in the build log
+# Debug : print all segment names so mismatches are visible in the logs
 puts "INFO: address segments after assign_bd_address:"
 foreach seg [get_bd_addr_segs] { puts "  $seg" }
 
